@@ -6,7 +6,7 @@ use super::{
 use core::{fmt::Display, iter, ops::RangeBounds, str::from_utf8};
 
 mod body;
-use body::CodeBody;
+use body::{CodeBody, DisplayCodeBody};
 mod nodes;
 use crate::utils::bound_into_included_u64;
 pub use nodes::{Instruction, Node};
@@ -228,6 +228,24 @@ impl ProgramAst {
     }
 }
 
+impl core::fmt::Display for ProgramAst {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        let mut first = true;
+        for p in self.local_procs.iter() {
+            if !first {
+                writeln!(f)?;
+            }
+            write!(f, "{}", p)?;
+            first = false;
+        }
+        writeln!(f)?;
+        writeln!(f, "begin")?;
+        write!(f, "{}", DisplayCodeBody::new(1, &self.body))?;
+        writeln!(f, "end")?;
+        Ok(())
+    }
+}
+
 // LIBRARY MODULE AST
 // ================================================================================================
 
@@ -395,6 +413,23 @@ impl Deserializable for ModuleAst {
     }
 }
 
+impl core::fmt::Display for ModuleAst {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        if let Some(doc) = &self.docs {
+            writeln!(f, "#! {}", doc)?;
+        }
+        let mut first = true;
+        for p in self.local_procs.iter() {
+            if !first {
+                writeln!(f)?;
+            }
+            write!(f, "{}", p)?;
+            first = false;
+        }
+        Ok(())
+    }
+}
+
 // PROCEDURE AST
 // ================================================================================================
 
@@ -545,6 +580,24 @@ impl Deserializable for ProcedureAst {
             is_export,
             docs,
         })
+    }
+}
+
+impl core::fmt::Display for ProcedureAst {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        if let Some(doc) = &self.docs {
+            writeln!(f, "#! {}", doc)?;
+        }
+
+        if self.is_export {
+            write!(f, "export")?;
+        } else {
+            write!(f, "proc")?;
+        }
+        writeln!(f, ".{}.{}", self.name, self.num_locals)?;
+        write!(f, "{}", DisplayCodeBody::new(1, &self.body))?;
+        writeln!(f, "end")?;
+        Ok(())
     }
 }
 
@@ -724,6 +777,24 @@ fn check_div_by_zero(value: u64, op: &Token, param_idx: usize) -> Result<(), Par
     if value == 0 {
         Err(ParsingError::invalid_param_with_reason(op, param_idx, "division by zero"))
     } else {
+        Ok(())
+    }
+}
+
+// DISPLAY AST
+// ================================================================================================
+
+/// Helper class for the fmt::Display implementations of the AST types
+
+const INDENTATION: &str = "    ";
+
+struct DisplayAst {}
+
+impl DisplayAst {
+    pub fn indent(f: &mut core::fmt::Formatter<'_>, indent_level: usize) -> core::fmt::Result {
+        for _ in 0..indent_level {
+            write!(f, "{INDENTATION}")?;
+        }
         Ok(())
     }
 }

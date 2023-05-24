@@ -1,3 +1,4 @@
+use super::nodes::DisplayNode;
 use super::{
     ByteReader, ByteWriter, Deserializable, DeserializationError, Node, Serializable,
     SourceLocation,
@@ -147,5 +148,29 @@ impl<'a> IntoIterator for &'a CodeBody {
 
     fn into_iter(self) -> Self::IntoIter {
         self.nodes.iter().zip(self.locations.iter())
+    }
+}
+
+/// DisplayCodeBody is used to pretty-print CodeBodys using core::fmt::Display
+pub struct DisplayCodeBody<'a> {
+    indent_level: usize,
+    code_body: &'a CodeBody,
+}
+
+impl<'a> DisplayCodeBody<'a> {
+    pub fn new(indent_level: usize, code_body: &'a CodeBody) -> Self {
+        Self {
+            indent_level,
+            code_body,
+        }
+    }
+}
+
+impl core::fmt::Display for DisplayCodeBody<'_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        for node in self.code_body.nodes().iter() {
+            write!(f, "{}", DisplayNode::new(self.indent_level, node))?;
+        }
+        Ok(())
     }
 }

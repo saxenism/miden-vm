@@ -1,4 +1,4 @@
-use super::{CodeBody, Felt, ProcedureId, Vec};
+use super::{CodeBody, DisplayAst, DisplayCodeBody, Felt, ProcedureId, Vec};
 use core::fmt;
 
 // NODES
@@ -19,6 +19,57 @@ pub enum Node {
     While {
         body: CodeBody,
     },
+}
+
+/// DisplayNode is used to pretty-print Nodes using fmt::Display
+pub struct DisplayNode<'a> {
+    indent_level: usize,
+    node: &'a Node,
+}
+
+impl<'a> DisplayNode<'a> {
+    pub fn new(indent_level: usize, node: &'a Node) -> Self {
+        Self { indent_level, node }
+    }
+}
+
+impl fmt::Display for DisplayNode<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.node {
+            Node::Instruction(i) => {
+                DisplayAst::indent(f, self.indent_level)?;
+                writeln!(f, "{}", i)?;
+            }
+            Node::IfElse {
+                true_case,
+                false_case,
+            } => {
+                DisplayAst::indent(f, self.indent_level)?;
+                writeln!(f, "if.true")?;
+                write!(f, "{}", DisplayCodeBody::new(self.indent_level + 1, true_case))?;
+                DisplayAst::indent(f, self.indent_level)?;
+                writeln!(f, "else")?;
+                write!(f, "{}", DisplayCodeBody::new(self.indent_level + 1, false_case))?;
+                DisplayAst::indent(f, self.indent_level)?;
+                writeln!(f, "end")?;
+            }
+            Node::Repeat { times, body } => {
+                DisplayAst::indent(f, self.indent_level)?;
+                writeln!(f, "repeat.{times}")?;
+                write!(f, "{}", DisplayCodeBody::new(self.indent_level + 1, body))?;
+                DisplayAst::indent(f, self.indent_level)?;
+                writeln!(f, "end")?;
+            }
+            Node::While { body } => {
+                DisplayAst::indent(f, self.indent_level)?;
+                writeln!(f, "while.true")?;
+                write!(f, "{}", DisplayCodeBody::new(self.indent_level + 1, body))?;
+                DisplayAst::indent(f, self.indent_level)?;
+                writeln!(f, "end")?;
+            }
+        }
+        Ok(())
+    }
 }
 
 /// This holds the list of instructions supported in a Miden program.
