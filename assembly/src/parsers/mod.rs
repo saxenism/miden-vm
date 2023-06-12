@@ -35,6 +35,12 @@ const MAX_LOCAL_PROCS: usize = u16::MAX as usize;
 /// Maximum number of bytes for a single documentation comment.
 const MAX_DOCS_LEN: usize = u16::MAX as usize;
 
+/// Maximum number of nodes in statement body (e.g., procedure body, loop body etc.).
+const MAX_BODY_LEN: usize = u16::MAX as usize;
+
+/// Maximum number of imported libraries in a module or a program
+const MAX_IMPORTS: usize = u16::MAX as usize;
+
 // TYPE ALIASES
 // ================================================================================================
 type LocalProcMap = BTreeMap<String, (u16, ProcedureAst)>;
@@ -48,6 +54,7 @@ type LocalConstMap = BTreeMap<String, u64>;
 /// A program AST consists of a list of internal procedure ASTs and a list of body nodes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProgramAst {
+    imports: BTreeMap<String, LibraryPath>,
     local_procs: Vec<ProcedureAst>,
     body: CodeBody,
     start: SourceLocation,
@@ -59,13 +66,18 @@ impl ProgramAst {
     /// Constructs a [ProgramAst].
     ///
     /// A program consist of a body and a set of internal (i.e., not exported) procedures.
-    pub fn new(local_procs: Vec<ProcedureAst>, body: Vec<Node>) -> Result<Self, ParsingError> {
+    pub fn new(imports: BTreeMap<String, LibraryPath>, local_procs: Vec<ProcedureAst>, body: Vec<Node>) -> Result<Self, ParsingError> {
+        if imports.len() > MAX_IMPORTS {
+            return Err(ParsingError::too_many_imports(imports.len(), MAX_LOCAL_PROCS));
+        }
+
         if local_procs.len() > MAX_LOCAL_PROCS {
             return Err(ParsingError::too_many_module_procs(local_procs.len(), MAX_LOCAL_PROCS));
         }
         let start = SourceLocation::default();
         let body = CodeBody::new(body);
         Ok(Self {
+            imports,
             local_procs,
             body,
             start,
@@ -103,9 +115,9 @@ impl ProgramAst {
         let local_constants = parse_constants(&mut tokens)?;
 
         let mut context = ParserContext {
-            imports,
-            local_constants,
-            ..Default::default()
+            imports: &imports,
+            local_procs: LocalProcMap::default(),
+            local_constants: local_constants,
         };
 
         context.parse_procedures(&mut tokens, false)?;
@@ -155,7 +167,7 @@ impl ProgramAst {
 
         let local_procs = sort_procs_into_vec(context.local_procs);
         let (nodes, locations) = body.into_parts();
-        Ok(Self::new(local_procs, nodes)?.with_source_locations(locations, start))
+        Ok(Self::new(imports, local_procs, nodes)?.with_source_locations(locations, start))
     }
 
     // SERIALIZATION / DESERIALIZATION
@@ -168,11 +180,17 @@ impl ProgramAst {
         // asserts below are OK because we enforce limits on the number of procedure and the
         // number of body instructions in relevant parsers
 
-        assert!(self.local_procs.len() <= u16::MAX as usize, "too many local procs");
+        assert!(self.imports.len() <= MAX_LOCAL_PROCS, "too many imports");
+        target.write_u16(self.imports.len() as u16);
+        // We don't need to serialized the keys, since they are the last name in the path
+        let values: Vec<LibraryPath> = self.imports.clone().into_values().collect();
+        values.write_into(&mut target);
+        
+        assert!(self.local_procs.len() <= MAX_LOCAL_PROCS, "too many local procs");
         target.write_u16(self.local_procs.len() as u16);
         self.local_procs.write_into(&mut target);
 
-        assert!(self.body.nodes().len() <= u16::MAX as usize, "too many body instructions");
+        assert!(self.body.nodes().len() <= MAX_BODY_LEN, "too many body instructions");
         target.write_u16(self.body.nodes().len() as u16);
         self.body.nodes().write_into(&mut target);
 
@@ -183,12 +201,19 @@ impl ProgramAst {
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, DeserializationError> {
         let mut source = SliceReader::new(bytes);
 
+        let num_imports = source.read_u16()?;
+        let import_paths: Vec<LibraryPath> = Deserializable::read_batch_from(&mut source, num_imports as usize)?;
+        let mut imports = BTreeMap::<String, LibraryPath>::new();
+        for p in import_paths.into_iter() {
+            imports.insert(p.last().to_string(), p);
+        }
+        
         let num_local_procs = source.read_u16()?;
         let local_procs = Deserializable::read_batch_from(&mut source, num_local_procs as usize)?;
 
         let body_len = source.read_u16()? as usize;
         let nodes = Deserializable::read_batch_from(&mut source, body_len)?;
-        match Self::new(local_procs, nodes) {
+        match Self::new(imports, local_procs, nodes) {
             Err(err) => Err(DeserializationError::UnknownError(err.message().clone())),
             Ok(res) => Ok(res),
         }
@@ -255,6 +280,7 @@ impl core::fmt::Display for ProgramAst {
 /// list could be local or exported.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ModuleAst {
+    imports: BTreeMap<String, LibraryPath>,
     docs: Option<String>,
     local_procs: Vec<ProcedureAst>,
 }
@@ -265,7 +291,10 @@ impl ModuleAst {
     /// Constructs a [ModuleAst].
     ///
     /// A module consists of internal and exported procedures but does not contain a body.
-    pub fn new(local_procs: Vec<ProcedureAst>, docs: Option<String>) -> Result<Self, ParsingError> {
+    pub fn new(imports: BTreeMap<String, LibraryPath>, local_procs: Vec<ProcedureAst>, docs: Option<String>) -> Result<Self, ParsingError> {
+        if imports.len() > MAX_IMPORTS {
+            return Err(ParsingError::too_many_imports(imports.len(), MAX_LOCAL_PROCS));
+        }
         if local_procs.len() > MAX_LOCAL_PROCS {
             return Err(ParsingError::too_many_module_procs(local_procs.len(), MAX_LOCAL_PROCS));
         }
@@ -274,7 +303,7 @@ impl ModuleAst {
                 return Err(ParsingError::module_docs_too_long(docs.len(), MAX_DOCS_LEN));
             }
         }
-        Ok(Self { docs, local_procs })
+        Ok(Self { imports, docs, local_procs })
     }
 
     // PARSER
@@ -288,9 +317,9 @@ impl ModuleAst {
         let imports = parse_imports(&mut tokens)?;
         let local_constants = parse_constants(&mut tokens)?;
         let mut context = ParserContext {
-            imports,
-            local_constants,
-            ..Default::default()
+            imports: &imports,
+            local_procs: LocalProcMap::default(),
+            local_constants: local_constants,
         };
         context.parse_procedures(&mut tokens, true)?;
 
@@ -309,7 +338,7 @@ impl ModuleAst {
         // get module docs and make sure the size is within the limit
         let docs = tokens.take_module_comments();
 
-        Self::new(local_procs, docs)
+        Self::new(imports, local_procs, docs)
     }
 
     // PUBLIC ACCESSORS
@@ -374,6 +403,12 @@ impl Serializable for ModuleAst {
         // asserts below are OK because we enforce limits on the number of procedure and length of
         // module docs in the module parser
 
+        assert!(self.imports.len() <= MAX_LOCAL_PROCS, "too many imports");
+        target.write_u16(self.imports.len() as u16);
+        // We don't need to serialized the keys, since they are the last name in the path
+        let values: Vec<LibraryPath> = self.imports.clone().into_values().collect();
+        values.write_into(target);
+
         match &self.docs {
             Some(docs) => {
                 assert!(docs.len() <= u16::MAX as usize, "docs too long");
@@ -393,6 +428,13 @@ impl Serializable for ModuleAst {
 
 impl Deserializable for ModuleAst {
     fn read_from<R: ByteReader>(source: &mut R) -> Result<Self, DeserializationError> {
+        let num_imports = source.read_u16()?;
+        let import_paths: Vec<LibraryPath> = Deserializable::read_batch_from(source, num_imports as usize)?;
+        let mut imports = BTreeMap::<String, LibraryPath>::new();
+        for p in import_paths.into_iter() {
+            imports.insert(p.last().to_string(), p);
+        }
+        
         let docs_len = source.read_u16()? as usize;
         let docs = if docs_len != 0 {
             let str = source.read_vec(docs_len)?;
@@ -406,7 +448,7 @@ impl Deserializable for ModuleAst {
         let num_local_procs = source.read_u16()? as usize;
         let local_procs = Deserializable::read_batch_from(source, num_local_procs)?;
 
-        match Self::new(local_procs, docs) {
+        match Self::new(imports, local_procs, docs) {
             Err(err) => Err(DeserializationError::UnknownError(err.message().clone())),
             Ok(res) => Ok(res),
         }
@@ -627,6 +669,9 @@ fn parse_imports(tokens: &mut TokenStream) -> Result<BTreeMap<String, LibraryPat
         }
     }
 
+    if imports.len() > MAX_IMPORTS {
+        return Err(ParsingError::too_many_imports(imports.len(), MAX_IMPORTS));
+    }
     Ok(imports)
 }
 
