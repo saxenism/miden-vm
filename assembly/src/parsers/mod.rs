@@ -255,18 +255,21 @@ impl ProgramAst {
 
 impl core::fmt::Display for ProgramAst {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        let mut first = true;
-        for p in self.local_procs.iter() {
-            if !first {
-                writeln!(f)?;
-            }
-            write!(f, "{}", p)?;
-            first = false;
+        for (_, path) in self.imports.iter() {
+            writeln!(f, "use {}", path)?;
         }
-        writeln!(f)?;
+        if self.imports.len() > 0 {
+            writeln!(f)?;
+        }
+        
+        for proc in self.local_procs.iter() {
+            writeln!(f, "{}", proc)?;
+        }
+
         writeln!(f, "begin")?;
         write!(f, "{}", DisplayCodeBody::new(1, &self.body))?;
         writeln!(f, "end")?;
+
         Ok(())
     }
 }
@@ -403,12 +406,6 @@ impl Serializable for ModuleAst {
         // asserts below are OK because we enforce limits on the number of procedure and length of
         // module docs in the module parser
 
-        assert!(self.imports.len() <= MAX_LOCAL_PROCS, "too many imports");
-        target.write_u16(self.imports.len() as u16);
-        // We don't need to serialized the keys, since they are the last name in the path
-        let values: Vec<LibraryPath> = self.imports.clone().into_values().collect();
-        values.write_into(target);
-
         match &self.docs {
             Some(docs) => {
                 assert!(docs.len() <= u16::MAX as usize, "docs too long");
@@ -420,6 +417,12 @@ impl Serializable for ModuleAst {
             }
         }
 
+        assert!(self.imports.len() <= MAX_LOCAL_PROCS, "too many imports");
+        target.write_u16(self.imports.len() as u16);
+        // We don't need to serialized the keys, since they are the last name in the path
+        let values: Vec<LibraryPath> = self.imports.clone().into_values().collect();
+        values.write_into(target);
+
         assert!(self.local_procs.len() <= u16::MAX as usize, "too many local procs");
         target.write_u16(self.local_procs.len() as u16);
         self.local_procs.write_into(target);
@@ -428,13 +431,6 @@ impl Serializable for ModuleAst {
 
 impl Deserializable for ModuleAst {
     fn read_from<R: ByteReader>(source: &mut R) -> Result<Self, DeserializationError> {
-        let num_imports = source.read_u16()?;
-        let import_paths: Vec<LibraryPath> = Deserializable::read_batch_from(source, num_imports as usize)?;
-        let mut imports = BTreeMap::<String, LibraryPath>::new();
-        for p in import_paths.into_iter() {
-            imports.insert(p.last().to_string(), p);
-        }
-        
         let docs_len = source.read_u16()? as usize;
         let docs = if docs_len != 0 {
             let str = source.read_vec(docs_len)?;
@@ -445,6 +441,13 @@ impl Deserializable for ModuleAst {
             None
         };
 
+        let num_imports = source.read_u16()?;
+        let import_paths: Vec<LibraryPath> = Deserializable::read_batch_from(source, num_imports as usize)?;
+        let mut imports = BTreeMap::<String, LibraryPath>::new();
+        for p in import_paths.into_iter() {
+            imports.insert(p.last().to_string(), p);
+        }
+        
         let num_local_procs = source.read_u16()? as usize;
         let local_procs = Deserializable::read_batch_from(source, num_local_procs)?;
 
@@ -460,14 +463,18 @@ impl core::fmt::Display for ModuleAst {
         if let Some(doc) = &self.docs {
             writeln!(f, "#! {}", doc)?;
         }
-        let mut first = true;
-        for p in self.local_procs.iter() {
-            if !first {
-                writeln!(f)?;
-            }
-            write!(f, "{}", p)?;
-            first = false;
+
+        for (_, path) in self.imports.iter() {
+            writeln!(f, "use {}", path)?;
         }
+        if self.imports.len() > 0 {
+            writeln!(f)?;
+        }
+
+        for proc in self.local_procs.iter() {
+            writeln!(f, "{}", proc)?;
+        }
+
         Ok(())
     }
 }
