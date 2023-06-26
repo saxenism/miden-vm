@@ -35,6 +35,7 @@ fn stark_verifier_e2f4() {
     // Verify inside Miden VM
     let source = "
         use.std::crypto::stark::verifier
+
         begin
             exec.verifier::verify
         end
