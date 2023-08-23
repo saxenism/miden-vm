@@ -53,6 +53,14 @@ When executing a *syscall* block, the VM does the following:
 
 A *syscall* block does not have any children. Thus, it must be leaf node in the tree.
 
+
+### Dyn block
+A **dyn** block is used to describe a node whose target is specified dynamically via the stack. When the VM encounters a *dyn* block, it executes a program which hashes to the target specified by the top of the stack. Thus, it has a dynamic target rather than a hardcoded target. In order to execute a *dyn* block, the VM must be aware of a program with the hash value that is specified by the top of the stack. Otherwise, the execution fails.
+
+TODO: diagram
+
+A *dyn* block does not have any children. Thus, it must be leaf node in the tree.
+
 ### Span block
 A **span** block is used to describe a linear sequence of operations. When the VM encounters a *span* block, it breaks the sequence of operations into batches and groups according to the following rules:
 * A group is represented by a single field element. Thus, assuming a single operation can be encoded using 7 bits, and assuming we are using a 64-bit field, a single group may encode up to 9 operations or a single immediate value.
